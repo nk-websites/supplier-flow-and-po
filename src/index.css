@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 24% 11%;
+    --surface: 0 0% 100%;
+    --muted: 220 16% 96%;
+    --muted-foreground: 220 10% 44%;
+    --border: 220 16% 90%;
+    --input: 220 16% 87%;
+    --ring: 349 74% 45%;
+    --primary: 349 74% 45%;
+    --primary-foreground: 0 0% 100%;
+    --primary-soft: 349 80% 96%;
+    --secondary: 220 16% 96%;
+    --secondary-foreground: 222 24% 16%;
+    --accent: 220 16% 95%;
+    --accent-foreground: 222 24% 16%;
+    --destructive: 0 72% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 56% 32%;
+    --warning: 32 92% 40%;
+    --info: 214 84% 46%;
+    --sidebar: 224 25% 10%;
+    --sidebar-foreground: 220 16% 80%;
+    --sidebar-muted: 221 14% 52%;
+    --sidebar-accent: 223 22% 17%;
+    --sidebar-border: 223 18% 19%;
+    --radius: 0.625rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.16);
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring/60 ring-offset-2 ring-offset-background;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-border bg-surface shadow-card;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-[13px] font-medium text-foreground;
+  }
+
+  .field-hint {
+    @apply mt-1 text-xs text-muted-foreground;
+  }
+
+  .data-table {
+    @apply w-full border-collapse text-sm;
+  }
+  .data-table thead th {
+    @apply whitespace-nowrap border-b border-border bg-muted/50 px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground;
+  }
+  .data-table tbody td {
+    @apply border-b border-border/70 px-4 py-3 align-middle;
+  }
+  .data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+  .data-table tbody tr {
+    @apply transition-colors;
+  }
+  .data-table tbody tr:hover {
+    @apply bg-muted/40;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    height: 8px;
+    width: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 9999px;
+  }
+}

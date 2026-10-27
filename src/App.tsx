@@ -10,6 +10,7 @@ import { ProductDetailPage } from "@/pages/ProductDetailPage";
 import { TransactionsPage } from "@/pages/TransactionsPage";
 import { PurchaseOrdersPage } from "@/pages/PurchaseOrdersPage";
 import { PurchaseOrderNewPage } from "@/pages/PurchaseOrderNewPage";
+import { PurchaseRequestsPage } from "@/pages/PurchaseRequestsPage";
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="/inventory/transactions" element={<TransactionsPage />} />
         <Route path="/purchase-orders" element={<PurchaseOrdersPage />} />
         <Route path="/purchase-orders/new" element={<PurchaseOrderNewPage />} />
+        <Route path="/purchase-requests" element={<PurchaseRequestsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

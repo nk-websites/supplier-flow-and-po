@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import {
   ArrowLeftRight,
+  ClipboardList,
   LayoutDashboard,
   Package,
   PanelLeftClose,
@@ -33,6 +34,7 @@ const inventoryNav: NavItem[] = [
 ];
 
 const procurementNav: NavItem[] = [
+  { to: "/purchase-requests", label: "Purchase Requests", icon: ClipboardList },
   { to: "/purchase-orders", label: "Purchase Orders", icon: ShoppingCart },
 ];
 

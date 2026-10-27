@@ -1,11 +1,17 @@
 import type {
+  AuditEvent,
   Contact,
   DashboardData,
+  InventorySummary,
   InventoryTransaction,
   Meta,
+  MovementDestination,
+  MovementDirection,
   POItem,
   Product,
   PurchaseOrder,
+  PurchaseRequest,
+  ReplenishmentGroup,
   SuggestedPurchase,
   Supplier,
   SupplierProduct,
@@ -56,6 +62,8 @@ export interface SupplierInput {
   country?: string;
   pincode?: string;
   gst?: string;
+  tax_details?: Record<string, string>;
+  bank_details?: Record<string, string>;
   payment_terms: string;
   contacts: Contact[];
   products?: {
@@ -86,6 +94,9 @@ export interface TransactionInput {
   product_id: string;
   qty: number;
   type: string;
+  direction: MovementDirection;
+  destination?: MovementDestination | "";
+  store?: string;
   reason?: string;
   related_po?: string;
   created_by?: string;
@@ -96,7 +107,9 @@ export interface POInput {
   supplier_id: string;
   status?: string;
   activity_date?: string;
-  tax_rate?: number;
+  purchasing_entity_id?: string;
+  mode?: string;
+  requesting_store_id?: string;
   items: { product_id: string; qty: number; unit: string; unit_price: number }[];
 }
 
@@ -117,11 +130,38 @@ export const api = {
     get: (id: string) => request<Supplier>(`/suppliers/${id}`),
     create: (body: SupplierInput) =>
       request<Supplier>("/suppliers", { method: "POST", body: JSON.stringify(body) }),
+    bulk: (suppliers: SupplierInput[]) =>
+      request<{ created: number; suppliers: Supplier[] }>("/suppliers/bulk", {
+        method: "POST",
+        body: JSON.stringify({ suppliers }),
+      }),
     update: (id: string, body: SupplierInput) =>
       request<Supplier>(`/suppliers/${id}`, { method: "PUT", body: JSON.stringify(body) }),
     remove: (id: string) => request<void>(`/suppliers/${id}`, { method: "DELETE" }),
     products: (id: string) => request<SupplierProduct[]>(`/suppliers/${id}/products`),
+    addProduct: (
+      id: string,
+      body: {
+        product_id?: string | null;
+        name?: string;
+        price: number;
+        unit: string;
+        priority: string;
+        moq: number;
+      }
+    ) =>
+      request<SupplierProduct>(`/suppliers/${id}/products`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    removeProduct: (id: string, spId: string) =>
+      request<void>(`/suppliers/${id}/products/${spId}`, { method: "DELETE" }),
     purchaseOrders: (id: string) => request<PurchaseOrder[]>(`/suppliers/${id}/purchase-orders`),
+    setStatus: (id: string, status: Supplier["status"]) =>
+      request<Supplier>(`/suppliers/${id}/status`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      }),
   },
 
   products: {
@@ -138,10 +178,39 @@ export const api = {
   },
 
   transactions: {
-    list: (params: { type?: string; product_id?: string } = {}) =>
-      request<InventoryTransaction[]>(`/transactions${qs(params)}`),
+    list: (
+      params: {
+        type?: string;
+        product_id?: string;
+        direction?: string;
+        destination?: string;
+      } = {}
+    ) => request<InventoryTransaction[]>(`/transactions${qs(params)}`),
     create: (body: TransactionInput) =>
       request<InventoryTransaction>("/transactions", { method: "POST", body: JSON.stringify(body) }),
+    transfer: (body: {
+      product_id: string;
+      qty: number;
+      from_store: string;
+      to_store: string;
+      reason?: string;
+      created_by?: string;
+      date?: string;
+    }) =>
+      request<{ outbound: InventoryTransaction; inbound: InventoryTransaction }>(
+        "/transactions/transfer",
+        { method: "POST", body: JSON.stringify(body) }
+      ),
+    summary: () => request<InventorySummary>("/inventory/summary"),
+  },
+
+  replenishment: {
+    list: () => request<ReplenishmentGroup[]>("/replenishment"),
+    reassign: (product_id: string, supplier_id: string) =>
+      request<{ product_id: string; supplier_id: string; supplier_name: string }>(
+        "/replenishment/reassign",
+        { method: "POST", body: JSON.stringify({ product_id, supplier_id }) }
+      ),
   },
 
   purchaseOrders: {
@@ -154,11 +223,107 @@ export const api = {
       request<PurchaseOrder>(`/purchase-orders/${id}`, { method: "PUT", body: JSON.stringify(body) }),
     remove: (id: string) => request<void>(`/purchase-orders/${id}`, { method: "DELETE" }),
     send: (id: string) => request<PurchaseOrder>(`/purchase-orders/${id}/send`, { method: "POST" }),
+    sendEmail: (
+      id: string,
+      body: {
+        to: string[];
+        subject: string;
+        body: string;
+        invoice_name?: string;
+        invoice_data?: string;
+      }
+    ) =>
+      request<PurchaseOrder>(`/purchase-orders/${id}/send-email`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    uploadInvoice: (id: string, body: { invoice_name: string; invoice_data: string }) =>
+      request<PurchaseOrder>(`/purchase-orders/${id}/invoice`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    receive: (
+      id: string,
+      body: {
+        items: { item_id: string; received_qty: number }[];
+        received_date?: string;
+        received_by?: string;
+        store?: string;
+      }
+    ) =>
+      request<PurchaseOrder>(`/purchase-orders/${id}/receive`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
     mergeDrafts: () =>
       request<{ merged: PurchaseOrder[]; count: number }>("/purchase-orders/merge-drafts", {
         method: "POST",
       }),
+    setAllocations: (
+      id: string,
+      allocations: { po_item_id: string; store_id: string; store_name: string; qty: number }[]
+    ) =>
+      request<PurchaseOrder>(`/purchase-orders/${id}/allocations`, {
+        method: "POST",
+        body: JSON.stringify({ allocations }),
+      }),
+    submit: (id: string, actor = "") =>
+      request<PurchaseOrder>(`/purchase-orders/${id}/submit`, {
+        method: "POST",
+        body: JSON.stringify({ actor }),
+      }),
+    approve: (id: string, actor = "") =>
+      request<PurchaseOrder>(`/purchase-orders/${id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ actor }),
+      }),
+    issue: (id: string, actor = "") =>
+      request<PurchaseOrder>(`/purchase-orders/${id}/issue`, {
+        method: "POST",
+        body: JSON.stringify({ actor }),
+      }),
+    cancel: (id: string, reason = "", actor = "") =>
+      request<PurchaseOrder>(`/purchase-orders/${id}/cancel`, {
+        method: "POST",
+        body: JSON.stringify({ reason, actor }),
+      }),
   },
+
+  purchaseRequests: {
+    list: (params: { status?: string; store_id?: string } = {}) =>
+      request<PurchaseRequest[]>(`/purchase-requests${qs(params)}`),
+    create: (body: {
+      requesting_store_id: string;
+      requesting_store_name?: string;
+      supplier_id: string;
+      purchasing_entity_id?: string;
+      requested_by?: string;
+      notes?: string;
+      items: { product_id: string; qty: number; unit: string }[];
+    }) =>
+      request<PurchaseRequest>("/purchase-requests", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    approve: (id: string, actor = "") =>
+      request<PurchaseRequest>(`/purchase-requests/${id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ actor }),
+      }),
+    reject: (id: string, reason = "", actor = "") =>
+      request<PurchaseRequest>(`/purchase-requests/${id}/reject`, {
+        method: "POST",
+        body: JSON.stringify({ reason, actor }),
+      }),
+    consolidate: (request_ids: string[], actor = "") =>
+      request<PurchaseOrder>("/purchase-requests/consolidate", {
+        method: "POST",
+        body: JSON.stringify({ request_ids, actor }),
+      }),
+  },
+
+  auditEvents: (params: { entity_type?: string; entity_id?: string } = {}) =>
+    request<AuditEvent[]>(`/audit-events${qs(params)}`),
 };
 
 export type { POItem };

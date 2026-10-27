@@ -22,3 +22,8 @@ houseofapps_creds.env
 .idea/
 .DS_Store
 *.log
+build/
+.swarm/
+.swarm-worktrees/
+.swarm-reset-bak/
+*.env

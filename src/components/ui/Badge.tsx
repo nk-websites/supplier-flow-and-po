@@ -37,7 +37,6 @@ export function Badge({
 const supplierTone: Record<string, Tone> = {
   Active: "success",
   Inactive: "neutral",
-  "Pending Verification": "warning",
 };
 
 const productTone: Record<string, Tone> = {
@@ -48,7 +47,11 @@ const productTone: Record<string, Tone> = {
 
 const poTone: Record<string, Tone> = {
   Draft: "neutral",
-  Sent: "info",
+  "Pending Approval": "warning",
+  Approved: "info",
+  Issued: "info",
+  "Partially Received": "warning",
+  Received: "success",
   Completed: "success",
   Cancelled: "danger",
 };
@@ -66,11 +69,37 @@ const txTone: Record<string, Tone> = {
   "Manual Adjustment": "info",
   "Purchase Receipt": "success",
   Return: "primary",
+  "Return to Supplier": "primary",
+};
+
+// User-facing label overrides. The database keeps the canonical status codes.
+const statusLabel: Record<string, string> = {
+  Draft: "Replenishment",
 };
 
 export function StatusBadge({ status, kind }: { status: string; kind: "supplier" | "product" | "po" }) {
   const map = kind === "supplier" ? supplierTone : kind === "product" ? productTone : poTone;
-  return <Badge tone={map[status] ?? "neutral"}>{status}</Badge>;
+  const label = kind === "po" ? statusLabel[status] ?? status : status;
+  return <Badge tone={map[status] ?? "neutral"}>{label}</Badge>;
+}
+
+export function MovementBadge({
+  direction,
+  destination,
+}: {
+  direction: "Inbound" | "Outbound";
+  destination?: string;
+}) {
+  const inbound = direction === "Inbound";
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[13px] font-medium">
+      <span className={inbound ? "text-success" : "text-destructive"}>{inbound ? "+" : "−"}</span>
+      <Badge tone={inbound ? "success" : "danger"}>{direction}</Badge>
+      {!inbound && destination && (
+        <span className="text-xs text-muted-foreground">→ {destination}</span>
+      )}
+    </span>
+  );
 }
 
 export function PriorityBadge({ priority }: { priority: string }) {

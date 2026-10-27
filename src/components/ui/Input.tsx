@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useId,
   type InputHTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
@@ -23,6 +24,23 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
     return <textarea ref={ref} className={cx(base, "min-h-[80px] py-2", className)} {...props} />;
   }
 );
+
+export function SuggestInput({
+  suggestions,
+  ...props
+}: InputHTMLAttributes<HTMLInputElement> & { suggestions: string[] }) {
+  const id = useId();
+  return (
+    <>
+      <Input list={id} {...props} />
+      <datalist id={id}>
+        {suggestions.map((s) => (
+          <option key={s} value={s} />
+        ))}
+      </datalist>
+    </>
+  );
+}
 
 export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
   function Select({ className, children, ...props }, ref) {

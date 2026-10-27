@@ -28,7 +28,7 @@ export function ProductNewPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const categories = meta?.categories ?? ["Vegetables", "Dairy", "Meat", "Grains", "Spices", "Packaging", "Other"];
+  const categories = meta?.categories ?? ["Vegetables", "Dairy", "Meat", "Grains", "Spices", "Packaging"];
   const units = meta?.units ?? ["kg", "litre", "piece", "dozen", "pack", "gram"];
 
   async function save() {

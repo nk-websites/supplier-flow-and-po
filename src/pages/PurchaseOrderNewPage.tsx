@@ -3,15 +3,16 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, Plus, Send, Trash2 } from "lucide-react";
 import { api, ApiError, type POInput } from "@/lib/api";
 import { useAsync } from "@/lib/useAsync";
-import { formatINR } from "@/lib/format";
-import { PageHeader } from "@/components/ui/Misc";
+import { formatDate, formatINR } from "@/lib/format";
+import { PageHeader, InfoRow } from "@/components/ui/Misc";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { StatusBadge } from "@/components/ui/Badge";
+import { SendSupplierEmailDialog } from "@/components/SendSupplierEmailDialog";
 import { EmptyState, ErrorState, TableSkeleton } from "@/components/ui/Feedback";
 import { Field, Input, Select } from "@/components/ui/Input";
 import { useToast } from "@/components/ui/Toast";
-import type { POStatus } from "@/types";
+import type { POStatus, PurchaseOrder } from "@/types";
 
 interface LineItem {
   key: string;
@@ -33,6 +34,7 @@ export function PurchaseOrderNewPage() {
   const presetSupplier = params.get("supplier") ?? "";
 
   const { data: suppliers } = useAsync(() => api.suppliers.list(), []);
+  const { data: meta } = useAsync(() => api.meta(), []);
   const draft = useAsync(
     () => (draftId ? api.purchaseOrders.get(draftId) : Promise.resolve(null)),
     [draftId]
@@ -40,11 +42,13 @@ export function PurchaseOrderNewPage() {
 
   const [supplierId, setSupplierId] = useState(presetSupplier);
   const [deliveryDate, setDeliveryDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [taxRate, setTaxRate] = useState("0");
+  const [entityId, setEntityId] = useState("");
+  const [mode, setMode] = useState("Centralized");
   const [items, setItems] = useState<LineItem[]>([]);
   const [status, setStatus] = useState<POStatus>("Draft");
   const [reference, setReference] = useState("");
   const [saving, setSaving] = useState<"draft" | "send" | null>(null);
+  const [emailPo, setEmailPo] = useState<PurchaseOrder | null>(null);
   const [error, setError] = useState("");
   const initialized = useRef(false);
 
@@ -61,8 +65,9 @@ export function PurchaseOrderNewPage() {
     const po = draft.data;
     setSupplierId(po.supplier_id);
     setDeliveryDate(po.activity_date);
-    setTaxRate(String(po.tax_rate ?? 0));
     setStatus(po.status);
+    setEntityId(po.purchasing_entity_id ?? "");
+    setMode(po.mode ?? "Centralized");
     setReference(po.reference);
     setItems(
       po.items.map((it) => ({
@@ -99,8 +104,7 @@ export function PurchaseOrderNewPage() {
     () => items.reduce((sum, it) => sum + (Number(it.qty) || 0) * (Number(it.unit_price) || 0), 0),
     [items]
   );
-  const tax = subtotal * (Number(taxRate) || 0) / 100;
-  const total = subtotal + tax;
+  const total = subtotal;
 
   function addItem() {
     const first = options[0];
@@ -156,7 +160,8 @@ export function PurchaseOrderNewPage() {
       supplier_id: supplierId,
       status: nextStatus,
       activity_date: deliveryDate,
-      tax_rate: Number(taxRate) || 0,
+      purchasing_entity_id: entityId || meta?.purchasing_entities?.[0]?.id || "",
+      mode,
       items: items.map((it) => ({
         product_id: it.product_id,
         qty: Number(it.qty) || 0,
@@ -191,17 +196,17 @@ export function PurchaseOrderNewPage() {
     if (!validate()) return;
     setSaving("send");
     try {
+      let po: PurchaseOrder;
       if (draftId) {
-        await api.purchaseOrders.update(draftId, buildPayload("Draft"));
-        await api.purchaseOrders.send(draftId);
+        po = await api.purchaseOrders.update(draftId, buildPayload("Draft"));
       } else {
-        await api.purchaseOrders.create(buildPayload("Sent"));
+        po = await api.purchaseOrders.create(buildPayload("Draft"));
       }
-      toast({ title: "Purchase order sent" });
-      navigate("/purchase-orders");
+      setEmailPo(po);
+      setSaving(null);
     } catch (err) {
       toast({
-        title: "Could not send purchase order",
+        title: "Could not prepare purchase order",
         description: err instanceof ApiError ? err.message : "Unexpected error",
         tone: "error",
       });
@@ -211,6 +216,7 @@ export function PurchaseOrderNewPage() {
 
   const isNew = !draftId;
   const isDraft = status === "Draft";
+  const readOnly = !isNew && (draft.data?.status ?? status) !== "Draft";
 
   return (
     <div className="space-y-6">
@@ -227,7 +233,9 @@ export function PurchaseOrderNewPage() {
         description={
           isNew
             ? "Select a supplier, add line items, then save a draft or send it."
-            : "Review and update this purchase order."
+            : readOnly
+              ? "This order has been sent and is read-only. Receive goods from the purchase orders list."
+              : "Review and update this draft purchase order."
         }
         actions={!isNew ? <StatusBadge status={status} kind="po" /> : undefined}
       />
@@ -240,6 +248,8 @@ export function PurchaseOrderNewPage() {
         <Card>
           <ErrorState message={draft.error} onRetry={draft.reload} />
         </Card>
+      ) : readOnly && draft.data ? (
+        <ReadOnlyOrderView po={draft.data} />
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
           <div className="space-y-6">
@@ -264,6 +274,27 @@ export function PurchaseOrderNewPage() {
                 </Field>
                 <Field label="Expected Delivery Date">
                   <Input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} />
+                </Field>
+                <Field label="Purchasing Entity">
+                  <Select
+                    value={entityId || meta?.purchasing_entities?.[0]?.id || ""}
+                    onChange={(e) => setEntityId(e.target.value)}
+                  >
+                    {(meta?.purchasing_entities ?? []).map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Procurement Mode">
+                  <Select value={mode} onChange={(e) => setMode(e.target.value)}>
+                    {(meta?.po_modes ?? ["Centralized", "Store-level"]).map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </Select>
                 </Field>
               </CardBody>
             </Card>
@@ -374,21 +405,6 @@ export function PurchaseOrderNewPage() {
                   <span className="text-muted-foreground">Subtotal</span>
                   <span className="font-medium tabular-nums">{formatINR(subtotal)}</span>
                 </div>
-                <div className="flex items-center justify-between gap-3 text-[13px]">
-                  <span className="text-muted-foreground">Tax / GST %</span>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={taxRate}
-                    onChange={(e) => setTaxRate(e.target.value)}
-                    className="h-8 w-24 text-right"
-                  />
-                </div>
-                <div className="flex items-center justify-between text-[13px]">
-                  <span className="text-muted-foreground">Tax amount</span>
-                  <span className="font-medium tabular-nums">{formatINR(tax)}</span>
-                </div>
                 <div className="flex items-center justify-between border-t border-border pt-3 text-sm">
                   <span className="font-semibold text-foreground">Total</span>
                   <span className="text-base font-semibold tabular-nums text-foreground">
@@ -418,6 +434,142 @@ export function PurchaseOrderNewPage() {
           </div>
         </div>
       )}
+
+      {emailPo && (
+        <SendSupplierEmailDialog
+          po={emailPo}
+          supplier={(suppliers ?? []).find((s) => s.id === emailPo.supplier_id) ?? null}
+          storeEmail={meta?.store_email ?? ""}
+          onClose={() => setEmailPo(null)}
+          onSent={() => {
+            setEmailPo(null);
+            navigate("/purchase-orders");
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ReadOnlyOrderView({ po }: { po: PurchaseOrder }) {
+  const anyReceived = po.items.some((it) => (it.received_qty || 0) > 0);
+  return (
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
+      <div className="space-y-6">
+        <Card>
+          <CardHeader title="Order details" description="Sent orders cannot be edited." />
+          <CardBody className="pt-2">
+            <dl className="divide-y divide-border">
+              <InfoRow label="Supplier">{po.supplier_name}</InfoRow>
+              <InfoRow label="Reference">{po.reference}</InfoRow>
+              <InfoRow label="Expected Delivery">{formatDate(po.activity_date)}</InfoRow>
+              <InfoRow label="Status">
+                <StatusBadge status={po.status} kind="po" />
+              </InfoRow>
+              {po.received_date && (
+                <InfoRow label="Received Date">{formatDate(po.received_date)}</InfoRow>
+              )}
+              {po.received_by && <InfoRow label="Received By">{po.received_by}</InfoRow>}
+            </dl>
+          </CardBody>
+        </Card>
+
+        <Card className="overflow-hidden">
+          <CardHeader
+            title="Line items"
+            description={`${po.item_count} item${po.item_count === 1 ? "" : "s"}`}
+          />
+          <div className="overflow-x-auto scrollbar-thin">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Product</th>
+                  <th className="text-right">Qty</th>
+                  <th>Per Unit</th>
+                  <th className="text-right">Unit Price</th>
+                  <th className="text-right">Line Total</th>
+                  {anyReceived && <th className="text-right">Received</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {po.items.map((it) => (
+                  <tr key={it.id}>
+                    <td className="font-medium text-foreground">{it.product_name}</td>
+                    <td className="text-right tabular-nums">
+                      {it.qty} {it.unit}
+                    </td>
+                    <td className="text-muted-foreground">{it.unit}</td>
+                    <td className="text-right tabular-nums text-muted-foreground">
+                      {formatINR(it.unit_price, { decimals: true })}
+                    </td>
+                    <td className="text-right font-medium tabular-nums">{formatINR(it.line_total)}</td>
+                    {anyReceived && (
+                      <td className="text-right tabular-nums text-muted-foreground">
+                        {it.received_qty || 0} {it.unit}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        {po.allocations && po.allocations.length > 0 && (
+          <Card className="overflow-hidden">
+            <CardHeader
+              title="Destination allocations"
+              description="Ordered quantities distributed across receiving stores."
+            />
+            <div className="overflow-x-auto scrollbar-thin">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Destination Store</th>
+                    <th className="text-right">Allocated</th>
+                    <th className="text-right">Received</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {po.allocations.map((a) => (
+                    <tr key={a.id}>
+                      <td className="font-medium text-foreground">{a.product_name || a.product_id}</td>
+                      <td className="text-muted-foreground">{a.store_name || a.store_id}</td>
+                      <td className="text-right tabular-nums">{a.qty}</td>
+                      <td className="text-right tabular-nums text-muted-foreground">
+                        {a.received_qty || 0}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        )}
+      </div>
+
+      <div className="space-y-6">
+        <Card>
+          <CardHeader title="Summary" />
+          <CardBody className="space-y-3 pt-2">
+            <div className="flex items-center justify-between text-[13px]">
+              <span className="text-muted-foreground">Subtotal</span>
+              <span className="font-medium tabular-nums">{formatINR(po.subtotal)}</span>
+            </div>
+            <div className="flex items-center justify-between border-t border-border pt-3 text-sm">
+              <span className="font-semibold text-foreground">Total</span>
+              <span className="text-base font-semibold tabular-nums text-foreground">
+                {formatINR(po.total)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-[13px]">
+              <span className="text-muted-foreground">Items</span>
+              <span className="font-medium tabular-nums">{po.item_count}</span>
+            </div>
+          </CardBody>
+        </Card>
+      </div>
     </div>
   );
 }

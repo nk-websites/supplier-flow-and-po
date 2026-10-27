@@ -6,8 +6,11 @@ import {
   MapPin,
   Pencil,
   Phone,
+  Plus,
+  Power,
   Send,
   ShoppingCart,
+  Trash2,
   Truck,
 } from "lucide-react";
 import { api, ApiError, type SupplierInput } from "@/lib/api";
@@ -20,9 +23,11 @@ import { Badge, PriorityBadge, StatusBadge } from "@/components/ui/Badge";
 import { ChipGroup } from "@/components/ui/Chip";
 import { EmptyState, ErrorState, TableSkeleton } from "@/components/ui/Feedback";
 import { Dialog } from "@/components/ui/Dialog";
-import { Field, Input, Select } from "@/components/ui/Input";
+import { Field, Input, Select, SuggestInput } from "@/components/ui/Input";
+import { SchemaFields } from "@/components/SupplierSchemaFields";
+import { SendSupplierEmailDialog } from "@/components/SendSupplierEmailDialog";
 import { useToast } from "@/components/ui/Toast";
-import type { PurchaseOrder, Supplier, SupplierProduct } from "@/types";
+import type { CountrySchemaField, CountrySchemas, Product, PurchaseOrder, Supplier, SupplierProduct } from "@/types";
 
 export function SupplierDetailPage() {
   const { id = "" } = useParams();
@@ -32,11 +37,15 @@ export function SupplierDetailPage() {
   const supplier = useAsync(() => api.suppliers.get(id), [id]);
   const products = useAsync(() => api.suppliers.products(id), [id]);
   const pos = useAsync(() => api.suppliers.purchaseOrders(id), [id]);
+  const catalog = useAsync(() => api.products.list(), []);
   const { data: meta } = useAsync(() => api.meta(), []);
 
   const [editOpen, setEditOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [priceHistory, setPriceHistory] = useState<SupplierProduct | null>(null);
-  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [emailPo, setEmailPo] = useState<PurchaseOrder | null>(null);
+  const [toggling, setToggling] = useState(false);
 
   if (supplier.error) {
     return (
@@ -50,29 +59,56 @@ export function SupplierDetailPage() {
   const supplierProducts = products.data ?? [];
   const orders = pos.data ?? [];
 
-  const openPos = orders.filter((p) => p.status === "Draft" || p.status === "Sent").length;
+  const openPos = orders.filter(
+    (p) => !["Received", "Cancelled"].includes(p.status)
+  ).length;
   const p0Count = supplierProducts.filter((p) => p.priority === "P0").length;
   const lifetime = orders
-    .filter((p) => p.status === "Sent" || p.status === "Completed")
+    .filter((p) => ["Issued", "Partially Received", "Received"].includes(p.status))
     .reduce((sum, p) => sum + p.total, 0);
 
-  async function sendToSupplier(po: PurchaseOrder) {
-    setSendingId(po.id);
+  async function toggleStatus() {
+    if (!s) return;
+    const next = s.status === "Active" ? "Inactive" : "Active";
+    setToggling(true);
     try {
-      const updated = await api.purchaseOrders.send(po.id);
+      await api.suppliers.setStatus(s.id, next);
       toast({
-        title: "Purchase order sent",
-        description: `${updated.reference} was sent to ${updated.supplier_name}.`,
+        title: next === "Active" ? "Supplier activated" : "Supplier deactivated",
+        description: `${s.name} is now ${next.toLowerCase()}.`,
+        tone: next === "Active" ? "success" : "info",
       });
-      pos.reload();
+      supplier.reload();
     } catch (err) {
       toast({
-        title: "Could not send purchase order",
+        title: "Could not update status",
         description: err instanceof ApiError ? err.message : "Unexpected error",
         tone: "error",
       });
     } finally {
-      setSendingId(null);
+      setToggling(false);
+    }
+  }
+
+  function sendToSupplier(po: PurchaseOrder) {
+    setEmailPo(po);
+  }
+
+  async function removeProduct(sp: SupplierProduct) {
+    if (!s) return;
+    setRemovingId(sp.id);
+    try {
+      await api.suppliers.removeProduct(s.id, sp.id);
+      toast({ title: "Product removed", description: `${sp.product_name} was removed from this supplier.` });
+      products.reload();
+    } catch (err) {
+      toast({
+        title: "Could not remove product",
+        description: err instanceof ApiError ? err.message : "Unexpected error",
+        tone: "error",
+      });
+    } finally {
+      setRemovingId(null);
     }
   }
 
@@ -95,6 +131,10 @@ export function SupplierDetailPage() {
             description={`${s.code} · ${s.categories.join(", ") || "Uncategorised"}`}
             actions={
               <>
+                <Button variant="outline" loading={toggling} onClick={toggleStatus}>
+                  <Power className="h-4 w-4" />
+                  {s.status === "Active" ? "Deactivate" : "Activate"}
+                </Button>
                 <Button variant="outline" onClick={() => setEditOpen(true)}>
                   <Pencil className="h-4 w-4" />
                   Edit
@@ -113,6 +153,12 @@ export function SupplierDetailPage() {
                 <CardHeader
                   title="Products supplied"
                   description={`${supplierProducts.length} negotiated item${supplierProducts.length === 1 ? "" : "s"}`}
+                  actions={
+                    <Button variant="outline" size="sm" onClick={() => setAddOpen(true)}>
+                      <Plus className="h-3.5 w-3.5" />
+                      Add Product
+                    </Button>
+                  }
                 />
                 {products.loading ? (
                   <TableSkeleton rows={3} cols={6} />
@@ -144,9 +190,19 @@ export function SupplierDetailPage() {
                             <td className="text-right tabular-nums text-muted-foreground">{p.moq}</td>
                             <td className="text-muted-foreground">{formatDate(p.last_purchased)}</td>
                             <td className="text-right">
-                              <Button variant="ghost" size="sm" onClick={() => setPriceHistory(p)}>
-                                View Price History
-                              </Button>
+                              <div className="inline-flex items-center gap-1">
+                                <Button variant="ghost" size="sm" onClick={() => setPriceHistory(p)}>
+                                  View Price History
+                                </Button>
+                                <button
+                                  onClick={() => removeProduct(p)}
+                                  disabled={removingId === p.id}
+                                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+                                  aria-label={`Remove ${p.product_name || "product"}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -198,7 +254,6 @@ export function SupplierDetailPage() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  loading={sendingId === po.id}
                                   onClick={() => sendToSupplier(po)}
                                 >
                                   <Send className="h-3.5 w-3.5" />
@@ -265,7 +320,6 @@ export function SupplierDetailPage() {
                       </span>
                     </InfoRow>
                     <InfoRow label="Payment terms">{s.payment_terms}</InfoRow>
-                    <InfoRow label="GST / Tax ID">{s.gst || "—"}</InfoRow>
                   </dl>
                   <div>
                     <p className="mb-2 text-[13px] font-medium text-muted-foreground">Categories</p>
@@ -273,6 +327,8 @@ export function SupplierDetailPage() {
                   </div>
                 </CardBody>
               </Card>
+
+              <TaxBankCard supplier={s} schemas={meta?.country_schemas} />
 
               <Card>
                 <CardHeader title="At a glance" />
@@ -293,11 +349,39 @@ export function SupplierDetailPage() {
               supplier={s}
               paymentTerms={meta?.payment_terms ?? ["Net 7", "Net 15", "Net 30", "COD"]}
               countries={meta?.countries ?? ["India"]}
-              supplierStatuses={meta?.supplier_statuses ?? ["Active", "Inactive", "Pending Verification"]}
+              countrySchemas={meta?.country_schemas ?? {}}
+              supplierStatuses={meta?.supplier_statuses ?? ["Active", "Inactive"]}
+              contactRoles={meta?.contact_roles ?? []}
               onClose={() => setEditOpen(false)}
               onSaved={() => {
                 setEditOpen(false);
                 supplier.reload();
+              }}
+            />
+          )}
+
+          {addOpen && (
+            <AddProductDialog
+              supplierId={s.id}
+              catalog={catalog.data ?? []}
+              units={meta?.units ?? ["kg", "litre", "piece", "dozen", "pack", "gram"]}
+              onClose={() => setAddOpen(false)}
+              onSaved={() => {
+                setAddOpen(false);
+                products.reload();
+              }}
+            />
+          )}
+
+          {emailPo && (
+            <SendSupplierEmailDialog
+              po={emailPo}
+              supplier={s}
+              storeEmail={meta?.store_email ?? ""}
+              onClose={() => setEmailPo(null)}
+              onSent={() => {
+                setEmailPo(null);
+                pos.reload();
               }}
             />
           )}
@@ -336,18 +420,242 @@ export function SupplierDetailPage() {
   );
 }
 
+function SchemaSummary({
+  title,
+  fields,
+  values,
+}: {
+  title: string;
+  fields: CountrySchemaField[];
+  values: Record<string, string>;
+}) {
+  const filled = fields.filter((f) => (values[f.key] ?? "").trim());
+  return (
+    <div>
+      <p className="mb-2 text-[13px] font-medium text-muted-foreground">{title}</p>
+      {filled.length === 0 ? (
+        <p className="text-[13px] text-muted-foreground">Not provided.</p>
+      ) : (
+        <dl className="divide-y divide-border">
+          {filled.map((f) => (
+            <InfoRow key={f.key} label={f.label}>
+              {values[f.key]}
+            </InfoRow>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+function TaxBankCard({ supplier, schemas }: { supplier: Supplier; schemas?: CountrySchemas }) {
+  const schema = schemas?.[supplier.country] ?? { tax: [], bank: [] };
+  return (
+    <Card>
+      <CardHeader
+        title="Tax & Bank"
+        description={`Fields configured for ${supplier.country || "this country"}.`}
+      />
+      <CardBody className="space-y-4 pt-2">
+        <SchemaSummary title="Tax details" fields={schema.tax} values={supplier.tax_details ?? {}} />
+        <SchemaSummary title="Bank details" fields={schema.bank} values={supplier.bank_details ?? {}} />
+      </CardBody>
+    </Card>
+  );
+}
+
+function AddProductDialog({
+  supplierId,
+  catalog,
+  units,
+  onClose,
+  onSaved,
+}: {
+  supplierId: string;
+  catalog: Product[];
+  units: string[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { toast } = useToast();
+  const [mode, setMode] = useState<"catalog" | "freeform">("catalog");
+  const [productId, setProductId] = useState("");
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [unit, setUnit] = useState(units[0] ?? "kg");
+  const [priority, setPriority] = useState("P1");
+  const [moq, setMoq] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  function chooseCatalog(id: string) {
+    setProductId(id);
+    const p = catalog.find((c) => c.id === id);
+    if (p) {
+      setUnit(p.unit);
+      setPrice(String(p.cost));
+    }
+  }
+
+  async function save() {
+    if (mode === "catalog" && !productId) {
+      setError("Choose a catalog product");
+      return;
+    }
+    if (mode === "freeform" && !name.trim()) {
+      setError("Enter a product name");
+      return;
+    }
+    setError("");
+    setSaving(true);
+    try {
+      await api.suppliers.addProduct(supplierId, {
+        product_id: mode === "catalog" ? productId : null,
+        name: mode === "freeform" ? name.trim() : "",
+        price: Number(price) || 0,
+        unit,
+        priority,
+        moq: Number(moq) || 0,
+      });
+      toast({ title: "Product added" });
+      onSaved();
+    } catch (err) {
+      toast({
+        title: "Could not add product",
+        description: err instanceof ApiError ? err.message : "Unexpected error",
+        tone: "error",
+      });
+      setSaving(false);
+    }
+  }
+
+  const modeButton = (value: "catalog" | "freeform", label: string) => (
+    <button
+      type="button"
+      aria-pressed={mode === value}
+      onClick={() => setMode(value)}
+      className={
+        "rounded-md border px-3 py-2 text-[13px] font-medium transition-colors " +
+        (mode === value
+          ? "border-primary/40 bg-primary/10 text-primary"
+          : "border-border text-muted-foreground hover:text-foreground")
+      }
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title="Add product"
+      description="Map a catalog product or add a custom one for this supplier."
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={save} loading={saving}>
+            Add product
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Source">
+          <div className="grid grid-cols-2 gap-2">
+            {modeButton("catalog", "Catalog product")}
+            {modeButton("freeform", "Custom product")}
+          </div>
+        </Field>
+        {mode === "catalog" ? (
+          <Field label="Product" required error={error}>
+            <Select value={productId} onChange={(e) => chooseCatalog(e.target.value)}>
+              <option value="">Select a product…</option>
+              {catalog.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.sku})
+                </option>
+              ))}
+            </Select>
+          </Field>
+        ) : (
+          <Field label="Product name" required error={error}>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Tomatoes" />
+          </Field>
+        )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Price (₹)">
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              placeholder="0.00"
+            />
+          </Field>
+          <Field label="Per Unit">
+            <Select value={unit} onChange={(e) => setUnit(e.target.value)}>
+              {units.map((u) => (
+                <option key={u} value={u}>
+                  {u}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Priority">
+            <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
+              {["P0", "P1", "P2"].map((pr) => (
+                <option key={pr} value={pr}>
+                  {pr}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="MOQ">
+            <Input
+              type="number"
+              min="0"
+              value={moq}
+              onChange={(e) => setMoq(e.target.value)}
+              placeholder="0"
+            />
+          </Field>
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+interface ContactDraft {
+  key: string;
+  name: string;
+  phone: string;
+  email: string;
+  role: string;
+}
+
+let contactSeq = 0;
+const nextContactKey = () => `c${++contactSeq}`;
+
 function EditSupplierDialog({
   supplier,
   paymentTerms,
   countries,
+  countrySchemas,
   supplierStatuses,
+  contactRoles,
   onClose,
   onSaved,
 }: {
   supplier: Supplier;
   paymentTerms: string[];
   countries: string[];
+  countrySchemas: CountrySchemas;
   supplierStatuses: string[];
+  contactRoles: string[];
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -356,30 +664,62 @@ function EditSupplierDialog({
   const [name, setName] = useState(supplier.name);
   const [status, setStatus] = useState<string>(supplier.status);
   const [payment, setPayment] = useState(supplier.payment_terms);
-  const [contact, setContact] = useState(supplier.contact_person);
-  const [phone, setPhone] = useState(supplier.phone);
-  const [email, setEmail] = useState(supplier.email);
   const [city, setCity] = useState(supplier.city);
   const [country, setCountry] = useState(supplier.country || "India");
+  const [taxDetails, setTaxDetails] = useState<Record<string, string>>(supplier.tax_details ?? {});
+  const [bankDetails, setBankDetails] = useState<Record<string, string>>(supplier.bank_details ?? {});
+  const [contacts, setContacts] = useState<ContactDraft[]>(() => {
+    const existing = supplier.contacts ?? [];
+    if (!existing.length) {
+      return [{ key: nextContactKey(), name: "", phone: "", email: "", role: "" }];
+    }
+    return existing.map((c) => ({
+      key: nextContactKey(),
+      name: c.name ?? "",
+      phone: c.phone ?? "",
+      email: c.email ?? "",
+      role: c.role ?? "",
+    }));
+  });
+
+  const schema = countrySchemas?.[country] ?? { tax: [], bank: [] };
+
+  const updateContact = (key: string, patch: Partial<ContactDraft>) =>
+    setContacts((prev) => prev.map((c) => (c.key === key ? { ...c, ...patch } : c)));
+  const addContact = () =>
+    setContacts((prev) => [...prev, { key: nextContactKey(), name: "", phone: "", email: "", role: "" }]);
+  const removeContact = (key: string) =>
+    setContacts((prev) => (prev.length > 1 ? prev.filter((c) => c.key !== key) : prev));
 
   async function save() {
     setSaving(true);
+    const primary = contacts[0];
     const payload: SupplierInput = {
       name,
       categories: supplier.categories,
       status,
-      contact_person: contact,
-      phone,
-      email,
-      role: supplier.role,
+      contact_person: primary?.name?.trim() ?? "",
+      phone: primary?.phone?.trim() ?? "",
+      email: primary?.email?.trim() ?? "",
+      role: primary?.role?.trim() ?? "",
       address: supplier.address,
       city,
       state: supplier.state,
       country,
       pincode: supplier.pincode,
-      gst: supplier.gst,
+      gst: taxDetails.gstin ?? supplier.gst,
+      tax_details: taxDetails,
+      bank_details: bankDetails,
       payment_terms: payment,
-      contacts: supplier.contacts,
+      contacts: contacts
+        .filter((c) => c.name.trim() || c.phone.trim() || c.email.trim())
+        .map((c, i) => ({
+          name: c.name.trim(),
+          phone: c.phone.trim(),
+          email: c.email.trim(),
+          role: c.role.trim(),
+          primary: i === 0,
+        })),
     };
     try {
       await api.suppliers.update(supplier.id, payload);
@@ -434,15 +774,6 @@ function EditSupplierDialog({
             ))}
           </Select>
         </Field>
-        <Field label="Contact Person">
-          <Input value={contact} onChange={(e) => setContact(e.target.value)} />
-        </Field>
-        <Field label="Phone">
-          <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
-        </Field>
-        <Field label="Email">
-          <Input value={email} onChange={(e) => setEmail(e.target.value)} />
-        </Field>
         <Field label="City">
           <Input value={city} onChange={(e) => setCity(e.target.value)} />
         </Field>
@@ -456,9 +787,91 @@ function EditSupplierDialog({
           </Select>
         </Field>
       </div>
+      <div className="mt-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-[13px] font-medium text-muted-foreground">Contact persons</p>
+          <Button variant="outline" size="sm" onClick={addContact}>
+            <Plus className="h-3.5 w-3.5" />
+            Add Contact
+          </Button>
+        </div>
+        {contacts.map((c, index) => (
+          <div key={c.key} className="rounded-lg border border-border bg-muted/30 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-[13px] font-medium text-foreground">
+                Contact {index + 1}
+                {index === 0 && (
+                  <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-semibold text-primary">
+                    Primary
+                  </span>
+                )}
+              </span>
+              {index > 0 && (
+                <button
+                  onClick={() => removeContact(c.key)}
+                  className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={`Remove contact ${index + 1}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Contact Name" required={index === 0}>
+                <Input
+                  value={c.name}
+                  onChange={(e) => updateContact(c.key, { name: e.target.value })}
+                  placeholder="Full name"
+                />
+              </Field>
+              <Field label="Phone" required={index === 0}>
+                <Input
+                  value={c.phone}
+                  onChange={(e) => updateContact(c.key, { phone: e.target.value })}
+                  placeholder="+91 98765 43210"
+                />
+              </Field>
+              <Field label="Email">
+                <Input
+                  type="email"
+                  value={c.email}
+                  onChange={(e) => updateContact(c.key, { email: e.target.value })}
+                  placeholder="name@company.com"
+                />
+              </Field>
+              <Field label="Role / Designation">
+                <SuggestInput
+                  suggestions={contactRoles}
+                  value={c.role}
+                  onChange={(e) => updateContact(c.key, { role: e.target.value })}
+                  placeholder="e.g. Procurement, Sales Manager"
+                />
+              </Field>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-5 space-y-4">
+        <div>
+          <p className="mb-2 text-[13px] font-medium text-muted-foreground">Tax details</p>
+          <SchemaFields
+            fields={schema.tax}
+            values={taxDetails}
+            onChange={(k, v) => setTaxDetails((prev) => ({ ...prev, [k]: v }))}
+          />
+        </div>
+        <div>
+          <p className="mb-2 text-[13px] font-medium text-muted-foreground">Bank details</p>
+          <SchemaFields
+            fields={schema.bank}
+            values={bankDetails}
+            onChange={(k, v) => setBankDetails((prev) => ({ ...prev, [k]: v }))}
+          />
+        </div>
+      </div>
       <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
         <Badge tone="neutral">Note</Badge>
-        Categories and contacts are preserved from the original supplier record.
+        Categories are preserved from the original supplier record.
       </p>
     </Dialog>
   );

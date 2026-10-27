@@ -7,8 +7,9 @@ import { cx } from "@/lib/format";
 import { PageHeader } from "@/components/ui/Misc";
 import { Card, CardBody, CardFooter, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { Field, Input, Select } from "@/components/ui/Input";
-import { MultiSelectChips } from "@/components/ui/Chip";
+import { Field, Input, Select, SuggestInput } from "@/components/ui/Input";
+import { SchemaFields } from "@/components/SupplierSchemaFields";
+import { CategoryTreePicker } from "@/components/CategoryTreePicker";
 import { useToast } from "@/components/ui/Toast";
 
 interface ContactDraft {
@@ -48,7 +49,8 @@ export function SupplierNewPage() {
   const [stateName, setStateName] = useState("");
   const [country, setCountry] = useState("India");
   const [pincode, setPincode] = useState("");
-  const [gst, setGst] = useState("");
+  const [taxDetails, setTaxDetails] = useState<Record<string, string>>({});
+  const [bankDetails, setBankDetails] = useState<Record<string, string>>({});
   const [paymentTerms, setPaymentTerms] = useState("Net 30");
   const [contacts, setContacts] = useState<ContactDraft[]>([
     { key: nextKey(), name: "", phone: "", email: "", role: "" },
@@ -62,11 +64,25 @@ export function SupplierNewPage() {
     "Grains",
     "Spices",
     "Packaging",
-    "Other",
   ];
   const countries = meta?.countries ?? ["India"];
   const terms = meta?.payment_terms ?? ["Net 7", "Net 15", "Net 30", "COD"];
   const units = meta?.units ?? ["kg", "litre", "piece", "dozen", "pack", "gram"];
+  const categoryTree = meta?.category_tree ?? categoriesList.map((name) => ({ name }));
+  const roles = meta?.contact_roles ?? [
+    "Procurement",
+    "Purchase Department",
+    "Sales",
+    "Accounts",
+    "Logistics",
+    "Other",
+  ];
+  const schema = meta?.country_schemas?.[country] ?? { tax: [], bank: [] };
+
+  const updateTax = (key: string, value: string) =>
+    setTaxDetails((prev) => ({ ...prev, [key]: value }));
+  const updateBank = (key: string, value: string) =>
+    setBankDetails((prev) => ({ ...prev, [key]: value }));
 
   const updateContact = (key: string, patch: Partial<ContactDraft>) =>
     setContacts((prev) => prev.map((c) => (c.key === key ? { ...c, ...patch } : c)));
@@ -98,6 +114,11 @@ export function SupplierNewPage() {
     if (!country.trim()) e.country = "Country is required";
     if (!contacts[0]?.name.trim()) e.contactName = "Primary contact name is required";
     if (!contacts[0]?.phone.trim()) e.contactPhone = "Primary contact phone is required";
+    for (const f of schema.tax) {
+      if (f.required && !(taxDetails[f.key] ?? "").trim()) {
+        e[`tax.${f.key}`] = `${f.label} is required`;
+      }
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -116,7 +137,9 @@ export function SupplierNewPage() {
       state: stateName.trim(),
       country: country.trim(),
       pincode: pincode.trim(),
-      gst: gst.trim(),
+      gst: (taxDetails.gstin ?? "").trim(),
+      tax_details: taxDetails,
+      bank_details: bankDetails,
       payment_terms: paymentTerms,
       role: contacts[0]?.role ?? "",
       email: contacts[0]?.email ?? "",
@@ -185,7 +208,7 @@ export function SupplierNewPage() {
                 </Field>
                 <Field label="Status">
                   <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-                    {(meta?.supplier_statuses ?? ["Active", "Inactive", "Pending Verification"]).map((s) => (
+                    {(meta?.supplier_statuses ?? ["Active", "Inactive"]).map((s) => (
                       <option key={s} value={s}>
                         {s}
                       </option>
@@ -193,8 +216,13 @@ export function SupplierNewPage() {
                   </Select>
                 </Field>
               </div>
-              <Field label="Categories Supplied" required error={errors.categories}>
-                <MultiSelectChips options={categoriesList} value={categories} onChange={setCategories} columns={3} />
+              <Field
+                label="Categories Supplied"
+                required
+                error={errors.categories}
+                hint="Pick a parent category or drill into its sub-categories."
+              >
+                <CategoryTreePicker tree={categoryTree} value={categories} onChange={setCategories} />
               </Field>
             </CardBody>
           </Card>
@@ -230,11 +258,29 @@ export function SupplierNewPage() {
                   <Input value={pincode} onChange={(e) => setPincode(e.target.value)} placeholder="560001" />
                 </Field>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field label="GST / Tax ID">
-                  <Input value={gst} onChange={(e) => setGst(e.target.value)} placeholder="29ABCDE1234F1Z5" />
-                </Field>
-              </div>
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader
+              title="Tax details"
+              description={`Tax identifiers required for ${country}.`}
+            />
+            <CardBody>
+              <SchemaFields
+                fields={schema.tax}
+                values={taxDetails}
+                onChange={updateTax}
+                errors={errors}
+                errorPrefix="tax"
+              />
+            </CardBody>
+          </Card>
+
+          <Card>
+            <CardHeader title="Bank details" description="Where this vendor receives payments." />
+            <CardBody>
+              <SchemaFields fields={schema.bank} values={bankDetails} onChange={updateBank} />
             </CardBody>
           </Card>
 
@@ -303,10 +349,11 @@ export function SupplierNewPage() {
                       />
                     </Field>
                     <Field label="Role / Designation">
-                      <Input
+                      <SuggestInput
+                        suggestions={roles}
                         value={contact.role}
                         onChange={(e) => updateContact(contact.key, { role: e.target.value })}
-                        placeholder="e.g. Sales Manager"
+                        placeholder="e.g. Procurement, Sales Manager"
                       />
                     </Field>
                   </div>

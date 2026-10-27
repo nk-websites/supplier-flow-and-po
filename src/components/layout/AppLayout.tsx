@@ -1,15 +1,41 @@
 import { useState } from "react";
 import { Outlet } from "react-router-dom";
-import { Menu, X } from "lucide-react";
+import { Building2, Menu, X } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { cx } from "@/lib/format";
+import { StoreProvider, useStore } from "@/lib/store-context";
+import { Select } from "@/components/ui/Input";
+
+function StoreSwitcher() {
+  const { stores, currentStore, setCurrentStoreId } = useStore();
+  if (!stores.length) return null;
+  return (
+    <div className="flex items-center gap-2">
+      <Building2 className="hidden h-4 w-4 text-muted-foreground sm:block" />
+      <Select
+        value={currentStore?.id ?? ""}
+        onChange={(e) => setCurrentStoreId(e.target.value)}
+        className="w-48"
+        aria-label="Switch store"
+      >
+        {stores.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}
+            {s.parent ? "" : " (Central)"}
+          </option>
+        ))}
+      </Select>
+    </div>
+  );
+}
 
 export function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-muted/40">
+    <StoreProvider>
+      <div className="min-h-screen bg-muted/40">
       {/* Desktop sidebar */}
       <aside
         className={cx(
@@ -62,6 +88,7 @@ export function AppLayout() {
             <span>Back office</span>
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <StoreSwitcher />
             <span className="hidden items-center gap-1.5 rounded-full border border-success/25 bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success sm:inline-flex">
               <span className="h-1.5 w-1.5 rounded-full bg-success" />
               Live
@@ -72,6 +99,7 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
-    </div>
+      </div>
+    </StoreProvider>
   );
 }
